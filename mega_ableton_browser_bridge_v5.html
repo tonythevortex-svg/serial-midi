@@ -1,0 +1,633 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Arduino Mega → Ableton | Touch MIDI Instrument v5 — sensor diagnostics</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+*{box-sizing:border-box}
+body{margin:0;color:#edf3f7;background:#10151d;line-height:1.5}
+main{max-width:880px;padding:26px 18px 56px;margin:0 auto}
+h1{font-size:clamp(1.55rem,4.5vw,2.25rem);line-height:1.15;letter-spacing:-.03em;margin:7px 0 8px}
+h2{font-size:1.07rem;margin:0 0 10px}
+p{margin:7px 0 12px}.lead,.muted,small{color:#adbacb}
+.card{background:#1b2431;border:1px solid #354458;border-radius:13px;padding:20px;margin-top:15px}
+label{display:block;font-size:.92rem;font-weight:650;margin:12px 0 5px}
+select,button{font:inherit}
+select{width:100%;border:1px solid #6b7b90;border-radius:8px;background:#0f1925;color:#eef2fa;padding:11px}
+button{border:0;border-radius:8px;background:#8de5ff;color:#08202e;font-weight:700;padding:11px 15px;cursor:pointer;margin:6px 7px 3px 0}
+button.secondary{background:#34445a;color:#f5f7fc;border:1px solid #687c94}
+button:disabled{opacity:.5;cursor:not-allowed}
+.row{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.hint{font-size:.91rem;color:#bfcbda}.status{color:#c3cfdf;font-size:.92rem;min-height:24px;margin:9px 0 4px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(173px,1fr));gap:9px;margin:12px 0}
+.metric{border:1px solid #3b4c63;background:#111b27;border-radius:9px;padding:11px}
+.metric-title{color:#b7c5d7;font-size:.78rem;margin-bottom:5px;display:flex;gap:8px;align-items:center}
+.metric-value{font-size:.97rem;font-weight:700;overflow-wrap:anywhere}
+.dot{height:10px;width:10px;min-width:10px;border-radius:50%;background:#677587;display:inline-block}
+.dot.ok{background:#7fe6ad;box-shadow:0 0 9px #7fe6ad70}
+.dot.warn{background:#ffd17b}
+.dot.flash{background:#93eaff;box-shadow:0 0 14px #93eaff}
+.callout{background:#122335;border-left:3px solid #83d6ff;padding:11px 13px;margin:12px 0;font-size:.91rem;border-radius:4px}
+#log{font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;background:#0d131c;color:#bbefd0;white-space:pre-wrap;overflow-wrap:anywhere;border-radius:8px;padding:14px;max-height:270px;min-height:118px;overflow:auto}
+code{color:#9edfff} ol{padding-left:21px;margin-bottom:0}
+strong{color:#f5f8fe}
+.controls-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin:16px 0}
+.control{background:#121c28;border:1px solid #36475d;border-radius:10px;padding:14px}
+.control label{display:flex;justify-content:space-between;gap:12px;margin:0 0 12px;align-items:center}
+.control output{color:#90e4ff;font-weight:700;font-variant-numeric:tabular-nums}
+input[type=range]{width:100%;accent-color:#80dfff;cursor:pointer}
+.control small{display:block;margin-top:6px;line-height:1.35}
+.sensor-track{height:18px;position:relative;border-radius:100px;border:1px solid #4c6a81;background:#0d1620;overflow:hidden;margin-top:12px}
+.sensor-marker{position:absolute;top:0;bottom:0;width:3px;z-index:2;pointer-events:none}.sensor-marker.base{background:#ffc276}.sensor-marker.trigger{background:#f5f7fb;box-shadow:0 0 7px #fff}
+.sensor-fill{background:linear-gradient(90deg,#477bda,#7fe3bb);height:100%;width:0%;transition:width .10s linear}
+.sensor-meta{display:flex;gap:10px;justify-content:space-between;margin-top:8px;color:#c4d4e3;font-size:.88rem}
+.panel-status{font-size:.88rem;color:#b9cce0}
+.zoom-track{height:26px;position:relative;border:1px solid #617c95;border-radius:8px;background:#0c1621;overflow:hidden;margin-top:8px}
+.zoom-fill{height:100%;width:0;background:linear-gradient(90deg,#4b88dc,#8aefca);min-width:0;transition:width .1s linear}
+.zoom-threshold{position:absolute;top:0;bottom:0;width:3px;background:#fff;box-shadow:0 0 8px #fff;pointer-events:none}
+.readout{font-size:1rem;font-weight:700;font-variant-numeric:tabular-nums}
+.good{color:#8ceac3}.caution{color:#ffe097}
+</style>
+</head>
+<body>
+<main>
+<h1>Arduino Mega → Ableton touch MIDI instrument v5</h1>
+<p class="lead">MIDI bridge with <strong>live controls, touch calibration and sensitive A0 diagnostics</strong>. Single HTML file. Use Chrome or Edge, not Safari.</p>
+
+<section class="card">
+<h2>1. Connect the Mac MIDI bus</h2>
+<p class="hint">Mac: Audio MIDI Setup → Window → Show MIDI Studio → double-click <strong>IAC Driver</strong> → turn on <strong>Device is online</strong>. Keep Ableton open.</p>
+<div class="row">
+  <button id="enableMidi">Enable / check MIDI</button>
+  <button class="secondary" id="refreshMidi">Refresh ports</button>
+</div>
+<label for="midiOutputs">Send MIDI to</label>
+<select id="midiOutputs"><option value="">Enable MIDI first</option></select>
+<label for="midiInputs">Optional: monitor MIDI arriving on a local input</label>
+<select id="midiInputs"><option value="">Enable MIDI first</option></select>
+<div class="callout" id="midiStatus" aria-live="polite">Click <strong>Enable / check MIDI</strong> to request browser MIDI access.</div>
+</section>
+
+<section class="card">
+<h2>2. Test Ableton, without the Arduino</h2>
+<p>Click <strong>Play 8-note test</strong>. Each note will be sent on <strong>MIDI channel 1</strong> to the selected output, and you will see a count here. In Ableton, the <strong>MIDI Track In indicator</strong> should flash, even if no instrument is loaded.</p>
+<div class="row">
+  <button id="testSeries">▶ Play 8-note test</button>
+  <button id="testOne" class="secondary">Send single middle C</button>
+  <button id="stopTest" class="secondary" disabled>Stop test</button>
+</div>
+<p class="status" id="testStatus" aria-live="polite">Ready to test. Arduino connection is not required.</p>
+<div class="grid">
+  <div class="metric"><div class="metric-title"><span class="dot" id="midiDot"></span>Browser MIDI access</div><div class="metric-value" id="midiValue">Not checked</div></div>
+  <div class="metric"><div class="metric-title"><span class="dot" id="outputDot"></span>Selected output</div><div class="metric-value" id="outputValue">None yet</div></div>
+  <div class="metric"><div class="metric-title"><span class="dot" id="sendDot"></span>Notes sent to MIDI output</div><div class="metric-value" id="sendValue">0</div></div>
+  <div class="metric"><div class="metric-title"><span class="dot" id="loopDot"></span>Local MIDI input observed</div><div class="metric-value" id="loopValue">0 messages</div></div>
+</div>
+<div class="callout"><strong>In Ableton:</strong> Settings → Link, Tempo & MIDI → under <strong>Input: IAC Driver</strong>, enable <strong>Track</strong>. Create a MIDI track with an instrument; select IAC Driver in <strong>MIDI From</strong>, and set <strong>Monitor → In</strong> (or arm the track). Check the upper MIDI Track In indicator. <strong>This page cannot directly confirm what Ableton received</strong>; its counters show browser sends and, where available, local IAC loopback.</div>
+</section>
+
+<section class="card">
+<h2>3. Connect the Arduino (after the MIDI test works)</h2>
+<label for="baud">Baud rate (match <code>Serial.begin(...)</code> in your sketch)</label>
+<select id="baud">
+<option value="115200" selected>115200</option><option value="57600">57600</option><option value="31250">31250</option><option value="9600">9600</option>
+</select>
+<div class="row"><button id="connectSerial">Connect Arduino</button><button id="disconnectSerial" class="secondary" disabled>Disconnect Arduino</button></div>
+<p class="status" id="serialStatus">Arduino not connected</p>
+<div class="grid">
+  <div class="metric"><div class="metric-title"><span class="dot" id="serialDot"></span>Arduino USB serial</div><div class="metric-value" id="serialValue">Disconnected</div></div>
+  <div class="metric"><div class="metric-title">Parsed Arduino MIDI messages</div><div class="metric-value" id="serialCount">0</div></div>
+  <div class="metric"><div class="metric-title">Forwarded MIDI messages</div><div class="metric-value" id="forwardCount">0</div></div>
+</div>
+<p class="hint">Close the Arduino IDE Serial Monitor and any other serial bridge before connecting. The Mega often resets when the serial port opens. This bridge expects raw MIDI bytes sent with <code>Serial.write(...)</code>, not text from <code>Serial.print(...)</code>.</p>
+</section>
+
+<section class="card" id="controls">
+<h2>4. Play and tune your touch instrument</h2>
+<p class="hint">Upload <strong>Mega_Touch_Random_MIDI_v5.ino</strong>. The Arduino starts silent and automatically calibrates its resting voltage on startup. You can recalibrate at any time with your fingers <strong>off</strong> the contacts.</p>
+<div class="grid">
+  <div class="metric"><div class="metric-title"><span class="dot" id="sensorDot"></span>Analogue input A0</div><div class="metric-value" id="sensorValue">Waiting for Arduino…</div></div>
+  <div class="metric"><div class="metric-title">Resting baseline</div><div class="metric-value" id="baseValue">Waiting…</div></div>
+  <div class="metric"><div class="metric-title">Starts playing above</div><div class="metric-value" id="triggerValue">Waiting…</div></div>
+  <div class="metric"><div class="metric-title"><span class="dot" id="touchDot"></span>Sensor / music state</div><div class="metric-value" id="touchValue">Unknown</div></div>
+  <div class="metric"><div class="metric-title">Control commands sent</div><div class="metric-value" id="commandCount">0</div></div>
+  <div class="metric"><div class="metric-title"><span class="dot" id="firmwareDot"></span>Arduino firmware</div><div class="metric-value" id="firmwareValue">Not checked</div></div>
+  <div class="metric"><div class="metric-title">RAW A0 (before smoothing)</div><div class="metric-value" id="rawAdcValue">Waiting…</div></div>
+  <div class="metric"><div class="metric-title">Serial bytes received</div><div class="metric-value" id="byteCount">0</div></div>
+  <div class="metric"><div class="metric-title">Sensor reports received</div><div class="metric-value" id="frameCount">0</div></div>
+</div>
+<div class="sensor-track" aria-label="Analogue voltage: orange marker = baseline, white marker = trigger threshold"><div class="sensor-fill" id="sensorFill"></div><span class="sensor-marker base" id="baselineMarker" hidden></span><span class="sensor-marker trigger" id="triggerMarker" hidden></span></div>
+<div class="sensor-meta"><span>0 V</span><span id="sensorRaw">ADC: -- / 1023</span><span>5 V</span></div>
+<p class="hint">This first bar shows the full 0–5 V range. Tiny touch voltages may be invisible here. Orange = baseline; white = trigger.</p>
+<label>Magnified sensor rise <span class="readout" id="riseValue">Waiting for readings…</span></label>
+<div class="zoom-track" aria-label="Sensitive view of ADC rise above baseline, with white trigger marker"><div class="zoom-fill" id="zoomFill"></div><span class="zoom-threshold" id="zoomThreshold" hidden></span></div>
+<div class="sensor-meta"><span>0 ADC above baseline</span><span id="zoomRange">Zoom: awaiting A0 readings</span></div>
+<p class="hint">The magnified bar enlarges very small changes. <strong>Cross the white marker to trigger MIDI.</strong> Actual values appear above in ADC units. 1 ADC unit is about 0.0049 V.</p>
+<div class="row"><button id="calibrate" disabled>Calibrate resting voltage</button><button class="secondary" id="testArduino" disabled>Test MIDI from Arduino</button></div>
+<p class="panel-status" id="calStatus" aria-live="polite">Connect the Arduino to read or calibrate its baseline.</p>
+<p class="panel-status" id="testArduinoStatus" aria-live="polite">Arduino self-test has not been run.</p>
+<div class="controls-grid">
+ <div class="control">
+  <label for="delta">Trigger rise above baseline <output id="deltaValue"></output></label>
+  <input type="range" id="delta" min="1" max="300" step="1" value="5" data-param="DELTA" data-unit="ADC"/>
+  <small>The minimum voltage rise needed to play. Start at 5 ADC (about 0.024 V); increase to reject noise, lower for weak finger contact.</small>
+ </div>
+ <div class="control">
+  <label for="hyst">Release hysteresis <output id="hystValue"></output></label>
+  <input type="range" id="hyst" min="0" max="100" step="1" value="2" data-param="HYST" data-unit="ADC"/>
+  <small>Prevents repeated on/off flickering near the threshold. Increase if touch repeatedly cuts in and out.</small>
+ </div>
+ <div class="control">
+  <label for="spd">Note speed <output id="spdValue"></output></label>
+  <input type="range" id="spd" min="90" max="1400" step="10" value="560" data-param="SPD" data-unit="ms"/>
+  <small>Time between notes. With voltage influence, stronger contact speeds it up.</small>
+ </div>
+ <div class="control">
+  <label for="var">Random variation <output id="varValue"></output></label>
+  <input type="range" id="var" min="0" max="8" step="1" value="2" data-param="VAR" data-unit="steps"/>
+  <small>Number of scale notes above/below the voltage-selected note.</small>
+ </div>
+ <div class="control">
+  <label for="gate">Note length <output id="gateValue"></output></label>
+  <input type="range" id="gate" min="10" max="95" step="5" value="65" data-param="GATE" data-unit="%"/>
+  <small>Short: staccato notes. Long: sustained notes.</small>
+ </div>
+ <div class="control">
+  <label for="trans">Transpose <output id="transValue"></output></label>
+  <input type="range" id="trans" min="-24" max="24" step="1" value="0" data-param="TRANS" data-unit="semitones"/>
+  <small>Move the whole sequence up or down by up to two octaves.</small>
+ </div>
+ <div class="control">
+  <label for="volt">Voltage influence <output id="voltValue"></output></label>
+  <input type="range" id="volt" min="0" max="100" step="5" value="100" data-param="VOLT" data-unit="%"/>
+  <small>0% = fixed pitch centre and tempo. 100% = voltage strongly shapes both.</small>
+ </div>
+ <div class="control">
+  <label for="scale">Musical scale</label>
+  <select id="scale" data-param="SCALE">
+    <option value="0" selected>A minor pentatonic</option>
+    <option value="1">C major pentatonic</option>
+    <option value="2">A natural minor</option>
+    <option value="3">Chromatic (all notes)</option>
+  </select>
+  <small>Changes the notes from which the random sequence is selected.</small>
+ </div>
+</div>
+<div class="row"><button class="secondary" id="sendAll">Send all settings</button><button class="secondary" id="resetControls">Reset controls</button></div>
+<p class="panel-status" id="configStatus" aria-live="polite">Controls are ready. Connect the Arduino to activate them.</p>
+<div class="callout"><strong>Sensor check:</strong> The firmware field must say <strong>v5 verified</strong>, and <strong>Sensor reports received</strong> must increase about 10 times each second. If they do, look at RAW A0 while touching the contacts. If RAW A0 stays at zero, check the wiring and resistor, not Ableton. Click <strong>Test MIDI from Arduino</strong> to check the serial return path independently of the sensor. The bridge filters diagnostic messages so they never reach Ableton.</div>
+<p class="hint">For two-pad sensing: connect one pad to Arduino 5V <strong>through 1 MΩ</strong>, connect the second pad to A0, and connect another <strong>1 MΩ from A0 to GND</strong>. Touch both pads together. Merely touching an unconnected A0 input is not a reliable voltage sensor. Do not exceed 5V on A0.</p>
+</section>
+
+<section class="card">
+<h2>Diagnostic log</h2>
+<div id="log" role="log" aria-live="polite">Open the page, enable MIDI, select IAC Driver, then play the test.</div>
+<div class="row"><button class="secondary" id="clearLog">Clear log</button></div>
+</section>
+<p class="hint" id="browserSupport"></p>
+</main>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+let midiAccess = null;
+let selectedOutput = null;
+let selectedInput = null;
+let port = null, reader = null, serialWriter = null, reading = false;
+let writeQueue = Promise.resolve(), readyTimer = null, connectionCheckTimer = null, commandCount = 0, receivedTelemetry = false;
+let bytesReceived=0, sensorFrames=0, firmwareVersion=null, legacyTelemetry=false, rawHi=0, rawAdc=null;
+const encoder = new TextEncoder();
+const controlTimers = new Map();
+const controlIds = ['delta','hyst','spd','var','gate','trans','volt','scale'];
+let sensorAdc=null, baselineAdc=null, sensorHi=0, baselineHi=0, sensorState=2;
+let runningStatus = null, currentStatus = null, dataBytes = [], sysex = false;
+let serialMessages = 0, forwardedMessages = 0, notesSent = 0, localMessages = 0;
+let testTimer = null, noteOffTimers = new Set(), sequenceIndex = 0;
+let lastTest = { time: -1, note: -1 };
+let logLines = [];
+const sequence = [60,64,67,72,67,64,62,60];
+
+function log(message) {
+  logLines.push(new Date().toLocaleTimeString() + '  ' + message);
+  if (logLines.length > 90) logLines.shift();
+  $('log').textContent = logLines.join('\n');
+  $('log').scrollTop = $('log').scrollHeight;
+}
+function dot(id, mode='') { $(''+id).className = 'dot' + (mode ? ' '+mode : ''); }
+function flash(id, reset='ok') {
+  dot(id,'flash');
+  setTimeout(() => dot(id,reset),250);
+}
+function setStatus(message) { $('testStatus').textContent = message; }
+function refreshDashboard() {
+  dot('midiDot',midiAccess?'ok':'');
+  $('midiValue').textContent = midiAccess?'Granted':'Not enabled';
+  dot('outputDot',selectedOutput?.state==='connected'?'ok':selectedOutput?'warn':'');
+  $('outputValue').textContent = selectedOutput ? selectedOutput.name : 'None selected';
+  $('sendValue').textContent = String(notesSent);
+  $('loopValue').textContent = localMessages + ' messages' + (selectedInput?' on '+selectedInput.name:' (input not selected)');
+  dot('serialDot',reading?'ok':'');
+  $('serialValue').textContent = reading?'Connected':'Disconnected';
+  $('serialCount').textContent = String(serialMessages);
+  $('forwardCount').textContent = String(forwardedMessages);
+  $('commandCount').textContent = String(commandCount);
+  $('calibrate').disabled = !reading;
+  $('testArduino').disabled = !reading;
+  $('byteCount').textContent=String(bytesReceived);
+  $('frameCount').textContent=String(sensorFrames);
+}
+async function enableMidi() {
+  if (!navigator.requestMIDIAccess) {
+    const msg = 'Web MIDI unavailable. Open this HTML file in Chrome or Edge; Safari does not support the required MIDI access.';
+    $('midiStatus').textContent = msg; log(msg); return false;
+  }
+  try {
+    if (!midiAccess) {
+      midiAccess = await navigator.requestMIDIAccess({sysex:false});
+      midiAccess.onstatechange = () => { populatePorts(); log('MIDI port list updated.'); };
+      log('Browser MIDI access granted.');
+    }
+    await populatePorts();
+    return true;
+  } catch(e) {
+    const msg = 'MIDI permission/access failed: '+e.name+' — '+e.message;
+    $('midiStatus').textContent = msg;
+    log(msg);
+    refreshDashboard();
+    return false;
+  }
+}
+async function populatePorts() {
+  if (!midiAccess) { refreshDashboard(); return; }
+  const outputList = $('midiOutputs');
+  const inputList = $('midiInputs');
+  const oldOut = outputList.value, oldIn = inputList.value;
+  outputList.replaceChildren(); inputList.replaceChildren();
+  const outs = [...midiAccess.outputs.values()];
+  const ins = [...midiAccess.inputs.values()];
+  if (!outs.length) outputList.add(new Option('No MIDI output — enable IAC Driver', ''));
+  for (const p of outs) outputList.add(new Option(p.name + (p.manufacturer?' — '+p.manufacturer:''),p.id));
+  if (!ins.length) inputList.add(new Option('No MIDI inputs found',''));
+  else inputList.add(new Option('None (loopback monitor off)',''));
+  for (const p of ins) inputList.add(new Option(p.name + (p.manufacturer?' — '+p.manufacturer:''),p.id));
+  const iacOut = outs.find(p => /IAC|Bus 1/i.test(p.name)) || outs[0];
+  outputList.value = outs.some(p=>p.id===oldOut) ? oldOut : (iacOut?.id||'');
+  const chosenOut = midiAccess.outputs.get(outputList.value)||null;
+  selectedOutput = chosenOut;
+  const iacIn = ins.find(p => p.name===chosenOut?.name) || ins.find(p=>/IAC|Bus 1/i.test(p.name));
+  inputList.value = ins.some(p=>p.id===oldIn) ? oldIn : (iacIn?.id||'');
+  await setInputMonitor(inputList.value);
+  const available = outs.map(p=>p.name).join(', ')||'none';
+  const outName = selectedOutput?.name||'none';
+  $('midiStatus').textContent = `MIDI access granted. Outputs found: ${available}. Selected: ${outName}.`;
+  refreshDashboard();
+}
+async function setInputMonitor(id) {
+  if (selectedInput) selectedInput.onmidimessage = null;
+  selectedInput = midiAccess?.inputs.get(id)||null;
+  if (selectedInput) {
+    try {
+      await selectedInput.open();
+      selectedInput.onmidimessage = e => {
+        localMessages++;
+        const b = [...e.data];
+        const isTestNote = b.length>=3 && (b[0]&0xF0)===0x90 && b[2]>0 && b[1]===lastTest.note && performance.now()-lastTest.time<2500;
+        log('← Local MIDI input ('+selectedInput.name+'): '+bytesToLabel(b)+(isTestNote?' — test note observed on bus':''));
+        $('loopValue').textContent = localMessages+' messages on '+selectedInput.name;
+        flash('loopDot');
+      };
+      log('Monitoring local MIDI input: '+selectedInput.name+'. This is NOT confirmation from Ableton.');
+    } catch(e) { log('Could not open local MIDI input: '+e.message); }
+  }
+  refreshDashboard();
+}
+$('enableMidi').addEventListener('click',enableMidi);
+$('refreshMidi').addEventListener('click',async()=>{if(!midiAccess) await enableMidi();else await populatePorts();});
+$('midiOutputs').addEventListener('change', () => {
+  selectedOutput = midiAccess?.outputs.get($('midiOutputs').value)||null;
+  log('Output selected: '+(selectedOutput?.name||'none'));
+  $('midiStatus').textContent = selectedOutput?'MIDI output: '+selectedOutput.name:'Select an available MIDI output.';
+  refreshDashboard();
+});
+$('midiInputs').addEventListener('change',()=>{ setInputMonitor($('midiInputs').value); });
+
+function bytesToLabel(msg) {
+  if (!msg.length) return '(empty)';
+  const k=msg[0]&0xF0, ch=(msg[0]&15)+1;
+  let type = k===0x90?(msg[2]?'Note ON':'Note OFF'):k===0x80?'Note OFF':k===0xB0?'CC':k===0xC0?'Program Change':k===0xD0?'Channel Pressure':k===0xE0?'Pitch Bend':'MIDI';
+  return type+' ch '+ch+' ['+msg.join(', ')+']';
+}
+async function ensureOutput() {
+  if (!midiAccess && !(await enableMidi())) { setStatus('Cannot test: browser MIDI access is unavailable or was refused.'); return false; }
+  if (!selectedOutput) { setStatus('Cannot test: there is no MIDI output. Enable IAC Driver in macOS Audio MIDI Setup, then refresh ports.'); return false; }
+  if (selectedOutput.state!=='connected') { setStatus('Cannot test: the selected MIDI output is disconnected. Refresh ports.'); return false; }
+  try { await selectedOutput.open(); return true; }
+  catch(e) { log('Could not open MIDI output: '+e.message); setStatus('MIDI output could not be opened: '+e.message); return false; }
+}
+function sendNote(note) {
+  if (!selectedOutput) return false;
+  try {
+    selectedOutput.send([0x90,note,105]);
+    // Scheduled note off is still sent even if the page is temporarily busy.
+    selectedOutput.send([0x80,note,0],performance.now()+300);
+    lastTest = {time: performance.now(),note};
+    notesSent++;
+    $('sendValue').textContent=String(notesSent);
+    flash('sendDot');
+    log('→ SENT to '+selectedOutput.name+': Note ON / OFF, note '+note+', channel 1. Check Ableton MIDI Track In indicator.');
+    return true;
+  } catch(e) {
+    log('MIDI SEND ERROR: '+e.name+' — '+e.message);
+    setStatus('MIDI send failed: '+e.message);
+    return false;
+  }
+}
+function stopSequence(finished=false) {
+  if(testTimer!==null) {clearInterval(testTimer);testTimer=null;}
+  $('stopTest').disabled = true;
+  $('testSeries').disabled = false;
+  if (finished) { setStatus('8 notes sent to the selected MIDI output. Did the MIDI Track In indicator in Ableton flash? If not, check Input: IAC Driver → Track On.'); log('Test finished: '+sequence.length+' notes sent. Browser send does NOT prove Ableton received them.'); }
+  else setStatus('Test stopped.');
+}
+$('testOne').addEventListener('click', async()=>{
+  setStatus('Checking MIDI access and output…');
+  if (!await ensureOutput()) return;
+  if (sendNote(60)) setStatus('Sent middle C (note 60) to '+selectedOutput.name+'. Check Ableton MIDI Track In indicator at top right.');
+});
+$('testSeries').addEventListener('click',async()=>{
+  setStatus('Checking MIDI access and output…');
+  if(!await ensureOutput()) return;
+  if(testTimer!==null) stopSequence();
+  sequenceIndex=0;
+  $('testSeries').disabled=true;
+  $('stopTest').disabled=false;
+  setStatus('Sending 8 notes… Watch Ableton MIDI Track In indicator.');
+  const tick = () => {
+    const note=sequence[sequenceIndex];
+    if (!sendNote(note)) { stopSequence(); return; }
+    sequenceIndex++;
+    setStatus('Test note '+sequenceIndex+'/8 sent: '+note+' to '+selectedOutput.name+'. Watch Ableton’s MIDI Track In indicator.');
+    if (sequenceIndex===sequence.length) stopSequence(true);
+  };
+  tick();
+  if (sequenceIndex<sequence.length) testTimer=setInterval(tick,650);
+});
+$('stopTest').addEventListener('click',()=>stopSequence());
+$('clearLog').addEventListener('click',()=>{logLines=[]; $('log').textContent='Log cleared.';});
+
+function formatControl(id) {
+  const input = $(id), output = $(id+'Value');
+  if (!output) return;
+  const suffix = input.dataset.unit || '';
+  output.textContent = input.value + (suffix ? ' '+suffix : '');
+}
+function commandToArduino(key, value) {
+  if (!reading || !serialWriter) return;
+  const commandText = '@'+key+'='+value+'\n';
+  writeQueue = writeQueue.catch(() => {}).then(async () => {
+    if (!reading || !serialWriter) return;
+    await serialWriter.write(encoder.encode(commandText));
+    commandCount++;
+    $('commandCount').textContent = String(commandCount);
+  }).catch(e => {
+    log('Could not send '+key+' command: '+e.message);
+    $('configStatus').textContent = 'Error sending settings: '+e.message;
+  });
+  return writeQueue;
+}
+function allSettings() {
+  for (const id of controlIds) commandToArduino($(id).dataset.param, $(id).value);
+  $('configStatus').textContent = reading ? 'Settings queued for Arduino.' : 'Controls updated. Connect the Arduino to apply them.';
+}
+function sensorVoltage(adc) { return (adc * 5 / 1023).toFixed(3) + ' V'; }
+function renderSensor() {
+  if (sensorAdc === null) return;
+  $('sensorValue').textContent=sensorVoltage(sensorAdc);
+  $('sensorRaw').textContent='ADC: '+sensorAdc+' / 1023';
+  $('sensorFill').style.width=(sensorAdc / 1023 * 100).toFixed(2)+'%';
+  $('rawAdcValue').textContent=rawAdc===null?'Waiting…':rawAdc+' ADC ('+sensorVoltage(rawAdc)+')';
+  dot('sensorDot','ok');
+  if (baselineAdc !== null) {
+    const trigger=baselineAdc+Number($('delta').value);
+    $('baseValue').textContent=sensorVoltage(baselineAdc)+' ('+baselineAdc+' ADC)';
+    $('triggerValue').textContent=trigger>1023?'Above 5 V (unreachable)':sensorVoltage(trigger)+' ('+trigger+' ADC)';
+    $('baselineMarker').hidden=false;
+    $('baselineMarker').style.left=(baselineAdc / 1023 * 100).toFixed(2)+'%';
+    $('triggerMarker').hidden=(trigger>1023);
+    $('triggerMarker').style.left=(Math.min(1023,trigger) / 1023 * 100).toFixed(2)+'%';
+    const rise=sensorAdc-baselineAdc;
+    const triggerRise=Number($('delta').value);
+    // Zoom relative to baseline. Even 1 ADC appears clearly.
+    const zoomMax=Math.max(15, Math.ceil(Math.max(triggerRise*1.5,Math.max(0,rise)*1.25)/5)*5);
+    const zoomPct=100*Math.max(0,rise)/zoomMax;
+    $('zoomFill').style.width=(rise>0 ? Math.max(2,Math.min(100,zoomPct)) : 0)+'%';
+    $('zoomThreshold').style.left=Math.min(100,triggerRise/zoomMax*100).toFixed(2)+'%';
+    $('zoomThreshold').hidden=triggerRise>zoomMax;
+    $('riseValue').textContent=(rise>=0?'+':'')+rise+' ADC ('+(rise*5/1023).toFixed(3)+' V)';
+    $('zoomRange').textContent='Magnified scale: 0 to +'+zoomMax+' ADC';
+  }
+  if (sensorState===2) {
+    $('touchValue').textContent='Calibrating — silent';
+    $('calStatus').textContent='Measuring resting voltage. Keep fingers OFF the contacts…';
+    dot('touchDot','warn');
+  } else if (sensorState===1) {
+    $('touchValue').textContent='ACTIVE — playing';
+    $('calStatus').textContent='Sensor active. Release the contact to stop notes.';
+    dot('touchDot','ok');
+  } else {
+    $('touchValue').textContent='IDLE — no notes';
+    $('calStatus').textContent='Calibration complete. Below trigger = silent. Recalibrate if the resting voltage changes.';
+    dot('touchDot','');
+  }
+}
+function updateTelemetry(cc,value) {
+  receivedTelemetry = true;
+  if (cc===114) {
+    firmwareVersion=value;
+    $('firmwareValue').textContent=value===5?'v5 verified':'Unexpected firmware '+value;
+    dot('firmwareDot',value===5?'ok':'warn');
+  }
+  if (cc===110) rawHi=value;
+  if (cc===111) rawAdc=Math.min(1023,(rawHi<<7)|value);
+  if (cc===112 && value===1) {
+    $('testArduinoStatus').textContent='Arduino acknowledged test note. Check the Ableton track.';
+    log('Arduino confirmed it received TEST and generated middle C.');
+  }
+  if (cc===118) sensorHi=value;
+  if (cc===119) {sensorAdc = Math.min(1023, (sensorHi<<7)|value);}
+  if (cc===116) baselineHi=value;
+  if (cc===117) {baselineAdc = Math.min(1023,(baselineHi<<7)|value);}
+  if (cc===115) {
+    sensorState=value;
+    sensorFrames++;
+    $('frameCount').textContent=String(sensorFrames);
+  }
+  renderSensor();
+}
+$('calibrate').addEventListener('click',()=>{
+  if (!reading) return;
+  $('calStatus').textContent='Calibration requested. Keep contacts untouched for about 2 seconds…';
+  log('Requested resting baseline calibration; Arduino will silence notes immediately.');
+  commandToArduino('CAL',1);
+});
+$('testArduino').addEventListener('click',()=>{
+  if (!reading) return;
+  log('Requesting middle C from the Arduino. This verifies commands → Arduino → serial MIDI → Ableton.');
+  $('testArduinoStatus').textContent='Test note requested from Arduino. Check its response and Ableton…';
+  commandToArduino('TEST',1);
+});
+for (const id of controlIds) {
+  const input = $(id);
+  formatControl(id);
+  input.addEventListener('input', () => {
+    formatControl(id);
+    if (id==='delta') renderSensor();
+    clearTimeout(controlTimers.get(id));
+    controlTimers.set(id, setTimeout(() => {
+      commandToArduino(input.dataset.param, input.value);
+      if (reading) $('configStatus').textContent = 'Updated '+input.dataset.param+': '+input.value;
+    },80));
+  });
+}
+$('sendAll').addEventListener('click',allSettings);
+$('resetControls').addEventListener('click', () => {
+  const defaults = {delta:5, hyst:2, spd:560, var:2, gate:65, trans:0, volt:100, scale:0};
+  for (const [id,v] of Object.entries(defaults)) {
+    clearTimeout(controlTimers.get(id));
+    $(id).value = String(v);
+    formatControl(id);
+  }
+  allSettings();
+  renderSensor();
+});
+
+function messageLength(status) { const k=status&0xF0; return (k===0xC0||k===0xD0)?1:2; }
+function forward(msg) {
+  // Channel 16 CC 110..119 are reserved for diagnostics, not music.
+  if (msg.length === 3 && msg[0] === 0xBF && msg[1] >= 110 && msg[1] <= 119) {
+    if (msg[1] >= 115 && msg[1] <= 119 && firmwareVersion !== 5) legacyTelemetry=true;
+    updateTelemetry(msg[1],msg[2]);
+    return;
+  }
+  serialMessages++;
+  $('serialCount').textContent=String(serialMessages);
+  if (selectedOutput && selectedOutput.state==='connected') {
+    try { selectedOutput.send(msg);forwardedMessages++;$('forwardCount').textContent=String(forwardedMessages);log('Arduino → '+selectedOutput.name+': '+bytesToLabel(msg)); }
+    catch(e){log('Arduino message received but MIDI send failed: '+e.message);}
+  } else log('Arduino MIDI received but NO connected MIDI output selected: '+bytesToLabel(msg));
+}
+function ingest(byte) {
+  if(byte>=0xF8)return;
+  if(byte===0xF0){sysex=true;currentStatus=null;runningStatus=null;dataBytes=[];return;}
+  if(byte===0xF7){sysex=false;return;}
+  if(sysex)return;
+  if(byte&0x80){dataBytes=[];if(byte<0xF0){currentStatus=byte;runningStatus=byte;} else {currentStatus=null;runningStatus=null;}return;}
+  if(currentStatus===null)currentStatus=runningStatus;
+  if(currentStatus===null)return;
+  dataBytes.push(byte);
+  if(dataBytes.length===messageLength(currentStatus)){
+    forward([currentStatus,...dataBytes]);dataBytes=[];currentStatus=runningStatus;
+  }
+}
+$('connectSerial').addEventListener('click',async()=>{
+  if (!navigator.serial) {
+    log('Web Serial unavailable. Use recent Chrome or Edge. Local-file security or organisation policy may also block it.');
+    $('serialStatus').textContent='Web Serial unavailable in this browser.';
+    return;
+  }
+  if(reading)return;
+  try {
+    port=await navigator.serial.requestPort();
+    await port.open({baudRate:Number($('baud').value)});
+    serialWriter=port.writable.getWriter();
+    writeQueue=Promise.resolve();
+    receivedTelemetry=false;
+    bytesReceived=0;sensorFrames=0;firmwareVersion=null;legacyTelemetry=false;rawAdc=null;rawHi=0;
+    sensorAdc=null;baselineAdc=null;sensorHi=0;baselineHi=0;sensorState=2;
+    $('firmwareValue').textContent='Checking…';dot('firmwareDot','');
+    $('rawAdcValue').textContent='Waiting…';
+    $('sensorRaw').textContent='ADC: -- / 1023';
+    $('sensorFill').style.width='0%';$('zoomFill').style.width='0%';$('zoomThreshold').hidden=true;
+    $('riseValue').textContent='Waiting for readings…';
+    $('testArduinoStatus').textContent='Arduino self-test has not been run.';
+    $('sensorValue').textContent='Waiting for Arduino…';
+    $('baseValue').textContent='Waiting…';$('triggerValue').textContent='Waiting…';
+    $('touchValue').textContent='Waiting for Arduino…';
+    $('baselineMarker').hidden=true;$('triggerMarker').hidden=true;
+    reading=true;
+    runningStatus=null;currentStatus=null;dataBytes=[];sysex=false;
+    $('connectSerial').disabled=true;$('disconnectSerial').disabled=false;
+    $('serialStatus').textContent='Arduino connected at '+$('baud').value+' baud.';
+    log('Arduino USB serial port opened; the Mega may reset now.');
+    $('configStatus').textContent='Connected. Waiting for Arduino startup, then sending controls…';
+    readyTimer=setTimeout(() => { if (reading) {allSettings(); log('Initial live settings sent to Arduino after startup.');}},1900);
+    connectionCheckTimer=setTimeout(()=>{
+      if (!reading || firmwareVersion===5) return;
+      const message=legacyTelemetry
+        ? 'Older Arduino sketch detected. Upload Mega_Touch_Random_MIDI_v5.ino to get RAW sensor diagnostics.'
+        : bytesReceived>0
+        ? 'Serial bytes are arriving but no v5 firmware ID. Check that v5 sketch uploaded and baud is 115200.'
+        : 'Serial port opened, but no bytes received. Check USB port, baud (115200), and upload the v5 Arduino sketch.';
+      $('firmwareValue').textContent=legacyTelemetry?'Old sketch detected':'No v5 data';
+      dot('firmwareDot','warn');
+      $('calStatus').textContent=message;
+      log(message);
+    },4500);
+    refreshDashboard();
+    readLoop();
+  } catch(e) {
+    log('Serial connection error: '+e.name+' — '+e.message);
+    $('serialStatus').textContent='Serial error: '+e.message;
+    try {serialWriter?.releaseLock();}catch(_){}
+    serialWriter=null;
+    try {await port?.close();}catch(_){}
+    port=null;refreshDashboard();
+  }
+});
+async function readLoop() {
+  try {
+    while(reading&&port?.readable) {
+      reader=port.readable.getReader();
+      try {
+        while(reading) {
+          const {value,done}=await reader.read();
+          if(done)break;
+          bytesReceived+=value.length;
+          $('byteCount').textContent=String(bytesReceived);
+          for(const b of value) ingest(b);
+        }
+      } finally {reader.releaseLock();reader=null;}
+    }
+  } catch(e){log('Serial read error: '+e.message);}
+  finally {
+    reading=false;
+    clearTimeout(readyTimer);
+    clearTimeout(connectionCheckTimer);
+    for (const t of controlTimers.values()) clearTimeout(t);
+    try {await writeQueue;}catch(_){}
+    try {serialWriter?.releaseLock();}catch(e){log('Serial writer close error: '+e.message);}
+    serialWriter=null;
+    try {await port?.close();}catch(e){log('Serial close error: '+e.message);}
+    port=null;
+    $('connectSerial').disabled=false;$('disconnectSerial').disabled=true;
+    $('serialStatus').textContent='Arduino disconnected.';
+    $('configStatus').textContent='Arduino disconnected. Sliders remain editable and will be sent on reconnect.';
+    $('calStatus').textContent='Arduino disconnected. No musical messages are forwarded from the sensor.';
+    $('touchValue').textContent='Disconnected';dot('touchDot','');
+    if (!receivedTelemetry) log('No sensor telemetry detected. Make sure the v5 Arduino sketch is uploaded.');
+    log('Arduino serial port closed.');
+    refreshDashboard();
+  }
+}
+$('disconnectSerial').addEventListener('click',async()=>{reading=false;try{await reader?.cancel();}catch(e){log('Disconnect error: '+e.message);}});
+const missing=[];
+if(!navigator.requestMIDIAccess)missing.push('Web MIDI');
+if(!navigator.serial)missing.push('Web Serial');
+$('browserSupport').textContent=missing.length
+  ?'Browser warning: '+missing.join(' and ')+' unavailable. Use Chrome or Edge in a permitted secure context. Restricted organisational browser settings cannot be bypassed by this page.'
+  :'Web MIDI + Web Serial APIs detected (access still requires permission).';
+refreshDashboard();
+</script>
+</body>
+</html>

@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mega → Ableton | Browser MIDI Bridge</title>
+<style>
+:root { color-scheme: dark; font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+* {box-sizing: border-box}
+body {margin:0; background:#11151e; color:#f4f6fa; line-height:1.45}
+main {max-width:790px; margin:3rem auto; padding:0 1.25rem 4rem}
+h1 {font-size:clamp(1.7rem,4vw,2.4rem);margin:.1rem 0 .45rem;letter-spacing:-.045em}
+.sub {color:#aeb8cc;margin:0 0 1.8rem}
+.card {background:#1b2230;border:1px solid #364154;border-radius:13px; padding:1.25rem;margin:1rem 0}
+h2 {font-size:1.05rem;margin:0 0 .8rem} label {display:block;font-size:.9rem;color:#d0d8e4;margin:.7rem 0 .25rem}
+button,select,input {font:inherit} select,input {background:#11151e; color:#f4f6fa;border:1px solid #546076; border-radius:8px;padding:.67rem;width:100%}
+button {border:0;border-radius:8px;padding:.7rem 1rem;cursor:pointer;font-weight:700;color:#0b1823;background:#79dbff;margin:.6rem .5rem .15rem 0}
+button.secondary {background:#343e51;color:#f2f5f8;border:1px solid #647088}button:disabled{opacity:.4;cursor:not-allowed}
+.status {color:#aeb8cc;font-size:.9rem;min-height:1.4em}.status strong{color:#92e0c8}
+.row {display:flex;flex-wrap:wrap;gap:.6rem}.row button {margin-right:0}
+small,.note {color:#aeb8cc}.note {font-size:.85rem;margin:1rem 0 0}
+#log {background:#0d121a;border-radius:8px;padding:1rem;max-height:200px;min-height:95px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:#b7edcb}
+kbd {background:#2b3343;border-radius:3px;padding:.15rem .35rem}
+code {color:#9ddfff}
+</style>
+</head>
+<body>
+<main>
+  <h1>Arduino Mega → Ableton</h1>
+  <p class="sub">A small, offline, no-install bridge using Web Serial + Web MIDI. Works in supported Chrome / Edge browsers, with macOS IAC Driver enabled.</p>
+  <section class="card">
+    <h2>1. Connect MIDI output</h2>
+    <p class="status">On Mac: open <b>Audio MIDI Setup → Window → Show MIDI Studio → IAC Driver</b>; tick <b>Device is online</b>.</p>
+    <button id="enableMidi">Enable MIDI</button>
+    <button class="secondary" id="refreshMidi" disabled>Refresh ports</button>
+    <label for="midiOutputs">MIDI destination</label>
+    <select id="midiOutputs"><option value="">Enable MIDI first</option></select>
+    <p class="status" id="midiStatus">MIDI not connected</p>
+    <button id="testMidi" class="secondary" disabled>Test middle C (no Arduino needed)</button>
+  </section>
+  <section class="card">
+    <h2>2. Connect Arduino Mega</h2>
+    <label for="baud">Baud rate (must match <code>Serial.begin</code> in the sketch)</label>
+    <select id="baud"><option value="115200" selected>115200</option><option value="31250">31250</option><option value="57600">57600</option><option value="9600">9600</option></select>
+    <div class="row">
+      <button id="connectSerial">Connect Arduino</button>
+      <button id="disconnectSerial" class="secondary" disabled>Disconnect</button>
+    </div>
+    <p class="status" id="serialStatus">Serial not connected</p>
+  </section>
+  <section class="card">
+    <h2>Activity</h2>
+    <div id="log" aria-live="polite">Ready. Enable MIDI to begin.</div>
+    <p class="note">Note On/Off, Control Change, Program Change, channel pressure and pitch bend are supported. MIDI SysEx is ignored. The bridge forwards MIDI channel messages, not text printed with <code>Serial.print()</code>.</p>
+  </section>
+  <p class="note"><b>Ableton:</b> Settings → Link, Tempo & MIDI → IAC Driver input: <b>Track On</b>. On an instrument MIDI track, set MIDI From to IAC Driver and Monitor to <b>In</b>, or arm the track. Close Arduino IDE Serial Monitor before connecting.</p>
+  <p class="note" id="browserSupport"></p>
+</main>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+let midiAccess = null, selectedOutput = null, port = null, reader = null, reading = false;
+let runningStatus = null, currentStatus = null, dataBytes = [], sysex = false;
+let logLines = [];
+function log(message) {
+  logLines.push(new Date().toLocaleTimeString() + '  ' + message);
+  if (logLines.length > 70) logLines.shift();
+  $('log').textContent = logLines.join('\n');
+  $('log').scrollTop = $('log').scrollHeight;
+}
+function messageLength(status) {
+  const kind = status & 0xF0;
+  return (kind === 0xC0 || kind === 0xD0) ? 1 : 2;
+}
+function labelMidi(msg) {
+  const kind = msg[0] & 0xF0, chan = (msg[0] & 0x0F) + 1;
+  const op = kind === 0x80 ? 'Note off' : kind === 0x90 ? (msg[2] ? 'Note on' : 'Note off') :
+    kind === 0xB0 ? 'CC' : kind === 0xC0 ? 'Program change' :
+    kind === 0xD0 ? 'Channel pressure' : kind === 0xE0 ? 'Pitch bend' :
+    kind === 0xA0 ? 'Poly pressure' : 'MIDI';
+  return `${op} · channel ${chan} · ${msg.slice(1).join(', ')}`;
+}
+function forward(msg) {
+  if (selectedOutput && selectedOutput.state === 'connected') {
+    selectedOutput.send(msg);
+    log('→ IAC  ' + labelMidi(msg));
+  } else {
+    log('Received, no MIDI output selected: ' + labelMidi(msg));
+  }
+}
+function ingest(byte) {
+  if (byte >= 0xF8) return; // Real-time messages aren't needed for this simple note/CC bridge.
+  if (byte === 0xF0) { sysex = true; currentStatus = null; runningStatus = null; dataBytes = []; return; }
+  if (byte === 0xF7) { sysex = false; return; }
+  if (sysex) return;
+  if (byte & 0x80) {
+    dataBytes = [];
+    if (byte < 0xF0) { currentStatus = byte; runningStatus = byte; }
+    else { currentStatus = null; runningStatus = null; }
+    return;
+  }
+  if (currentStatus === null) currentStatus = runningStatus;
+  if (currentStatus === null) return;
+  dataBytes.push(byte);
+  if (dataBytes.length === messageLength(currentStatus)) {
+    forward([currentStatus, ...dataBytes]);
+    dataBytes = [];
+    currentStatus = runningStatus; // MIDI running status across repeated messages.
+  }
+}
+function refreshPorts() {
+  const dropdown = $('midiOutputs');
+  const prev = dropdown.value;
+  dropdown.replaceChildren();
+  if (!midiAccess) return;
+  const outputs = Array.from(midiAccess.outputs.values());
+  if (!outputs.length) {
+    dropdown.add(new Option('No MIDI outputs found — enable IAC Driver', ''));
+    selectedOutput = null;
+  } else {
+    for (const out of outputs) dropdown.add(new Option(`${out.name}${out.manufacturer ? ' · ' + out.manufacturer : ''}`, out.id));
+    const iac = outputs.find(out => /IAC|Bus 1/i.test(out.name));
+    dropdown.value = outputs.some(out => out.id === prev) ? prev : (iac || outputs[0]).id;
+    selectedOutput = midiAccess.outputs.get(dropdown.value);
+  }
+  $('testMidi').disabled = !selectedOutput;
+  $('midiStatus').textContent = selectedOutput ? `Selected: ${selectedOutput.name}` : 'No MIDI destination available';
+}
+$('enableMidi').onclick = async () => {
+  if (!navigator.requestMIDIAccess) {log('Web MIDI is unavailable: use Chrome or Edge.');return;}
+  try {
+    midiAccess = await navigator.requestMIDIAccess({sysex:false});
+    midiAccess.onstatechange = refreshPorts;
+    $('refreshMidi').disabled = false;
+    refreshPorts();
+    log('MIDI access granted.');
+  } catch (e) { log('MIDI error: ' + e.message); }
+};
+$('refreshMidi').onclick = refreshPorts;
+$('midiOutputs').onchange = () => {
+  selectedOutput = midiAccess?.outputs.get($('midiOutputs').value) || null;
+  $('testMidi').disabled = !selectedOutput;
+  $('midiStatus').textContent = selectedOutput ? 'Selected: ' + selectedOutput.name : 'No MIDI destination selected';
+  if (selectedOutput) log('MIDI output selected: ' + selectedOutput.name);
+};
+$('testMidi').onclick = () => {
+  if (!selectedOutput) return;
+  const out = selectedOutput;
+  out.send([0x90,60,100]);
+  out.send([0x80,60,0], window.performance.now() + 250);
+  log('Test note sent: middle C / note 60');
+};
+$('connectSerial').onclick = async () => {
+  if (!navigator.serial) { log('Web Serial unavailable: use Chrome or Edge on a secure page.'); return; }
+  if (reading) return;
+  try {
+    port = await navigator.serial.requestPort();
+    await port.open({baudRate: Number($('baud').value)});
+    reading = true;
+    runningStatus = null; currentStatus = null; dataBytes = []; sysex = false;
+    $('connectSerial').disabled = true;
+    $('disconnectSerial').disabled = false;
+    $('serialStatus').textContent = 'Arduino connected (' + $('baud').value + ' baud)';
+    log('Serial port opened. The Mega may reset when it connects.');
+    readLoop();
+  } catch (e) {
+    log('Serial connection error: ' + e.message);
+    try {await port?.close();}catch(_e){}
+    port = null;
+  }
+};
+async function readLoop() {
+  try {
+    while (reading && port?.readable) {
+      reader = port.readable.getReader();
+      try {
+        while (reading) {
+          const {value,done} = await reader.read();
+          if (done) break;
+          for (const b of value) ingest(b);
+        }
+      } finally { reader.releaseLock(); reader = null; }
+    }
+  } catch(e) { log('Serial read error: ' + e.message); }
+  finally {
+    reading = false;
+    try { await port?.close(); } catch(e) {log('Close: ' + e.message);}
+    port = null;
+    $('connectSerial').disabled = false;
+    $('disconnectSerial').disabled = true;
+    $('serialStatus').textContent = 'Serial disconnected';
+    log('Serial connection closed.');
+  }
+}
+$('disconnectSerial').onclick = async () => {
+  reading = false;
+  try { if (reader) await reader.cancel(); } catch(e) {log('Disconnect: ' + e.message);}
+};
+const unavailable = [];
+if (!('serial' in navigator)) unavailable.push('Web Serial');
+if (!('requestMIDIAccess' in navigator)) unavailable.push('Web MIDI');
+$('browserSupport').textContent = unavailable.length
+  ? `Browser warning: ${unavailable.join(' and ')} unavailable here. Use recent Chrome or Edge, with HTTPS/localhost if local-file access is restricted.`
+  : 'Browser APIs detected. If access is blocked by organisational policy, no web app can override that policy.';
+</script>
+</body>
+</html>
